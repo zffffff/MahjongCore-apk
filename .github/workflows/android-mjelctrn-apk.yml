@@ -1,0 +1,134 @@
+# Public CI relay: build mjelctrn-only APK from private zffffff/MahjongCore.
+# Does not consume private-repo Actions minutes.
+#
+# Secret: MAHJONGCORE_DEPLOY_KEY = read-only deploy key on MahjongCore
+
+name: Android mjelctrn APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "MahjongCore git ref (branch / tag / SHA)"
+        required: false
+        default: "main"
+
+concurrency:
+  group: android-mjelctrn-apk-relay
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Assemble debug APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout private MahjongCore
+        uses: actions/checkout@v4
+        with:
+          repository: zffffff/MahjongCore
+          ref: ${{ inputs.ref || 'main' }}
+          ssh-key: ${{ secrets.MAHJONGCORE_DEPLOY_KEY }}
+          path: src
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK
+        run: sdkmanager --install "ndk;26.1.10909125" "cmake;3.22.1"
+
+      - name: Fetch SDL2 2.30.0
+        run: |
+          set -euo pipefail
+          curl -fsSL -o sdl2.zip https://github.com/libsdl-org/SDL/releases/download/release-2.30.0/SDL2-2.30.0.zip
+          unzip -q sdl2.zip
+          echo "SDL2_SRC=$PWD/SDL2-2.30.0" >> "$GITHUB_ENV"
+          echo "SDL2_ANDROID_JAVA=$PWD/SDL2-2.30.0/android-project/app/src/main/java" >> "$GITHUB_ENV"
+
+      - name: Build pack_assets (host, no SDL)
+        working-directory: src
+        run: |
+          set -euo pipefail
+          mkdir -p build-host
+          g++ -O2 -std=c++17 -Isrc -o build-host/pack_assets \
+            tools/pack_assets_main.cpp src/asset_pack.cpp
+          echo "PACK_ASSETS=$PWD/build-host/pack_assets" >> "$GITHUB_ENV"
+
+      - name: Stage mjelctrn assets into android/
+        working-directory: src
+        run: |
+          set -euo pipefail
+          STAGE=build/apk_pak_stage
+          ASSETS=android/app/src/main/assets
+          rm -rf "$STAGE" "$ASSETS/ui" "$ASSETS/tiles"
+          mkdir -p "$STAGE/mjelctrn" "$ASSETS"
+          # 只拷电子基盘芯片，跳过电池档
+          find roms/mjelctrn -maxdepth 1 -type f ! -name 'nvram.bin' ! -name '*.mcs' -exec cp -f {} "$STAGE/mjelctrn/" \;
+          "$PACK_ASSETS" "$STAGE" "$ASSETS/game_assets.pak"
+          cp -a assets/ui "$ASSETS/ui"
+          cp -a assets/tiles "$ASSETS/tiles"
+          ls -lh "$ASSETS"
+
+      - name: Wire SDL2 Java sources
+        working-directory: src
+        run: |
+          set -euo pipefail
+          mkdir -p android/app/src/main/java
+          cp -a "$SDL2_ANDROID_JAVA/org" android/app/src/main/java/
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Generate Gradle wrapper
+        working-directory: src/android
+        run: |
+          set -euo pipefail
+          gradle wrapper --gradle-version 8.7
+          chmod +x gradlew
+
+      - name: Bump versionCode
+        working-directory: src
+        run: |
+          set -euo pipefail
+          VC="${{ github.run_number }}"
+          sed -i "s/versionCode [0-9][0-9]*/versionCode ${VC}/" android/app/build.gradle
+          sed -i "s/versionName \"[^\"]*\"/versionName \"0.1.${VC}\"/" android/app/build.gradle
+
+      - name: Assemble debug APK
+        working-directory: src/android
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/26.1.10909125
+        run: |
+          set -euo pipefail
+          # local.properties for SDK
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          echo "ndk.dir=$ANDROID_NDK_HOME" >> local.properties
+          ./gradlew :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Stage APK
+        id: stage
+        working-directory: src
+        run: |
+          set -euo pipefail
+          SRC="$(find android/app/build/outputs/apk/debug -name '*.apk' -type f | head -n 1)"
+          test -n "$SRC"
+          mkdir -p dist-apk
+          OUT="dist-apk/MahjongCore-mjelctrn-${{ github.run_number }}-debug.apk"
+          cp "$SRC" "$OUT"
+          echo "apk=$OUT" >> "$GITHUB_OUTPUT"
+          ls -lh "$OUT"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mahjongcore-mjelctrn-apk
+          path: src/${{ steps.stage.outputs.apk }}
+          if-no-files-found: error
+          retention-days: 1
