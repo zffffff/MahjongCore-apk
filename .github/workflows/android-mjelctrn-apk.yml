@@ -92,13 +92,12 @@ jobs:
           mkdir -p android/app/src/main/java
           cp -a "$SDL2_ANDROID_JAVA/org" android/app/src/main/java/
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Generate Gradle wrapper
+      - name: Install Gradle + generate wrapper
         working-directory: src/android
         run: |
           set -euo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y gradle
           gradle wrapper --gradle-version 8.7
           chmod +x gradlew
 
@@ -116,7 +115,6 @@ jobs:
           ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/26.1.10909125
         run: |
           set -euo pipefail
-          # local.properties for SDK
           echo "sdk.dir=$ANDROID_HOME" > local.properties
           echo "ndk.dir=$ANDROID_NDK_HOME" >> local.properties
           ./gradlew :app:assembleDebug --no-daemon --stacktrace
