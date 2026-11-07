@@ -85,13 +85,6 @@ jobs:
           cp -a assets/tiles "$ASSETS/tiles"
           ls -lhR "$ASSETS" | head -n 40
 
-      - name: Wire SDL2 Java sources
-        working-directory: src
-        run: |
-          set -euo pipefail
-          mkdir -p android/app/src/main/java
-          cp -a "$SDL2_ANDROID_JAVA/org" android/app/src/main/java/
-
       - name: Bump versionCode
         working-directory: src
         run: |
