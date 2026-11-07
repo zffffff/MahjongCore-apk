@@ -63,20 +63,27 @@ jobs:
             tools/pack_assets_main.cpp src/asset_pack.cpp
           echo "PACK_ASSETS=$PWD/build-host/pack_assets" >> "$GITHUB_ENV"
 
-      - name: Stage mjelctrn assets into android/
+      - name: Stage UI assets into android/ (ROM 不进 git，手机侧 adb push)
         working-directory: src
         run: |
           set -euo pipefail
-          STAGE=build/apk_pak_stage
           ASSETS=android/app/src/main/assets
-          rm -rf "$STAGE" "$ASSETS/ui" "$ASSETS/tiles"
-          mkdir -p "$STAGE/mjelctrn" "$ASSETS"
-          # 只拷电子基盘芯片，跳过电池档
-          find roms/mjelctrn -maxdepth 1 -type f ! -name 'nvram.bin' ! -name '*.mcs' -exec cp -f {} "$STAGE/mjelctrn/" \;
-          "$PACK_ASSETS" "$STAGE" "$ASSETS/game_assets.pak"
+          rm -rf "$ASSETS/ui" "$ASSETS/tiles"
+          mkdir -p "$ASSETS"
+          # 可选：若私仓本机有 roms/（一般不会进 git），则打进 pak；否则只带 UI。
+          if [[ -d roms/mjelctrn ]]; then
+            STAGE=build/apk_pak_stage
+            rm -rf "$STAGE"
+            mkdir -p "$STAGE/mjelctrn"
+            find roms/mjelctrn -maxdepth 1 -type f ! -name 'nvram.bin' ! -name '*.mcs' -exec cp -f {} "$STAGE/mjelctrn/" \;
+            "$PACK_ASSETS" "$STAGE" "$ASSETS/game_assets.pak"
+            echo "embedded mjelctrn pak"
+          else
+            echo "no roms/ in checkout — APK will load roms from app external storage"
+          fi
           cp -a assets/ui "$ASSETS/ui"
           cp -a assets/tiles "$ASSETS/tiles"
-          ls -lh "$ASSETS"
+          ls -lhR "$ASSETS" | head -n 40
 
       - name: Wire SDL2 Java sources
         working-directory: src
